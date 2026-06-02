@@ -5,6 +5,7 @@ local Teams = game:GetService('Teams');
 local Players = game:GetService('Players');
 local RunService = game:GetService('RunService')
 local TweenService = game:GetService('TweenService');
+local Workspace = game:GetService('Workspace');
 local RenderStepped = RunService.RenderStepped;
 local LocalPlayer = Players.LocalPlayer;
 local Mouse = LocalPlayer:GetMouse();
@@ -164,27 +165,53 @@ end;
 function Library:MakeDraggable(Instance, Cutoff)
     Instance.Active = true;
 
+    local Dragging = false;
+    local DragInput = nil;
+    local DragStart = nil;
+    local StartPosition = nil;
+
+    local function UpdateDrag(Input)
+        local Delta = Input.Position - DragStart;
+        Instance.Position = UDim2.new(
+            StartPosition.X.Scale,
+            StartPosition.X.Offset + Delta.X,
+            StartPosition.Y.Scale,
+            StartPosition.Y.Offset + Delta.Y
+        );
+    end;
+
     Instance.InputBegan:Connect(function(Input)
-        if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
             local ObjPos = Vector2.new(
-                Mouse.X - Instance.AbsolutePosition.X,
-                Mouse.Y - Instance.AbsolutePosition.Y
+                Input.Position.X - Instance.AbsolutePosition.X,
+                Input.Position.Y - Instance.AbsolutePosition.Y
             );
 
             if ObjPos.Y > (Cutoff or 40) then
                 return;
             end;
 
-            while InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
-                Instance.Position = UDim2.new(
-                    0,
-                    Mouse.X - ObjPos.X + (Instance.Size.X.Offset * Instance.AnchorPoint.X),
-                    0,
-                    Mouse.Y - ObjPos.Y + (Instance.Size.Y.Offset * Instance.AnchorPoint.Y)
-                );
+            Dragging = true;
+            DragStart = Input.Position;
+            StartPosition = Instance.Position;
 
-                RenderStepped:Wait();
-            end;
+            Input.Changed:Connect(function()
+                if Input.UserInputState == Enum.UserInputState.End then
+                    Dragging = false;
+                end;
+            end);
+        end;
+    end)
+
+    Instance.InputChanged:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch then
+            DragInput = Input;
+        end;
+    end)
+
+    InputService.InputChanged:Connect(function(Input)
+        if Input == DragInput and Dragging and DragStart and StartPosition then
+            UpdateDrag(Input);
         end;
     end)
 end;
@@ -2939,6 +2966,26 @@ function Library:Notify(Text, Time)
     end);
 end;
 
+local function GetViewportSize()
+    local Camera = Workspace.CurrentCamera;
+    return Camera and Camera.ViewportSize or Vector2.new(1280, 720);
+end;
+
+local function GetFittedWindowSize(BaseSize)
+    local Viewport = GetViewportSize();
+    local Width = BaseSize.X.Offset > 0 and BaseSize.X.Offset or 550;
+    local Height = BaseSize.Y.Offset > 0 and BaseSize.Y.Offset or 600;
+    local PaddingX = InputService.TouchEnabled and 24 or 16;
+    local PaddingY = InputService.TouchEnabled and 72 or 16;
+    local AvailableWidth = math.max(Viewport.X - PaddingX, 260);
+    local AvailableHeight = math.max(Viewport.Y - PaddingY, 260);
+
+    return UDim2.fromOffset(
+        math.floor(math.min(Width, AvailableWidth)),
+        math.floor(math.min(Height, AvailableHeight))
+    );
+end;
+
 function Library:CreateWindow(...)
     local Arguments = { ... }
     local Config = { AnchorPoint = Vector2.zero }
@@ -2956,6 +3003,8 @@ function Library:CreateWindow(...)
 
     if typeof(Config.Position) ~= 'UDim2' then Config.Position = UDim2.fromOffset(175, 50) end
     if typeof(Config.Size) ~= 'UDim2' then Config.Size = UDim2.fromOffset(550, 600) end
+    local BaseWindowSize = Config.Size;
+    Config.Size = GetFittedWindowSize(BaseWindowSize);
 
     if Config.Center then
         Config.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -2978,6 +3027,39 @@ function Library:CreateWindow(...)
     });
 
     Library:MakeDraggable(Outer, 25);
+
+    local function ApplyScreenFit()
+        Outer.Size = GetFittedWindowSize(BaseWindowSize);
+
+        if Config.Center then
+            Outer.AnchorPoint = Vector2.new(0.5, 0.5);
+            Outer.Position = UDim2.fromScale(0.5, 0.5);
+        else
+            local Viewport = GetViewportSize();
+            local Size = Outer.AbsoluteSize;
+            local Position = Outer.AbsolutePosition;
+            Outer.Position = UDim2.fromOffset(
+                math.clamp(Position.X, 8, math.max(8, Viewport.X - Size.X - 8)),
+                math.clamp(Position.Y, 8, math.max(8, Viewport.Y - Size.Y - 8))
+            );
+        end;
+    end;
+
+    local function BindViewportFit()
+        local Camera = Workspace.CurrentCamera;
+        if Camera then
+            Library:GiveSignal(Camera:GetPropertyChangedSignal('ViewportSize'):Connect(ApplyScreenFit));
+        end;
+    end;
+
+    ApplyScreenFit();
+    BindViewportFit();
+    Library:GiveSignal(Workspace:GetPropertyChangedSignal('CurrentCamera'):Connect(function()
+        task.defer(function()
+            ApplyScreenFit();
+            BindViewportFit();
+        end);
+    end));
 
     local Inner = Library:Create('Frame', {
         BackgroundColor3 = Library.MainColor;
@@ -3122,7 +3204,7 @@ function Library:CreateWindow(...)
             BackgroundTransparency = 1;
             BorderSizePixel = 0;
             Position = UDim2.new(0, 8 - 1, 0, 8 - 1);
-            Size = UDim2.new(0.5, -12 + 2, 0, 507 + 2);
+            Size = UDim2.new(0.5, -12 + 2, 1, -14);
             CanvasSize = UDim2.new(0, 0, 0, 0);
             BottomImage = '';
             TopImage = '';
@@ -3135,7 +3217,7 @@ function Library:CreateWindow(...)
             BackgroundTransparency = 1;
             BorderSizePixel = 0;
             Position = UDim2.new(0.5, 4 + 1, 0, 8 - 1);
-            Size = UDim2.new(0.5, -12 + 2, 0, 507 + 2);
+            Size = UDim2.new(0.5, -12 + 2, 1, -14);
             CanvasSize = UDim2.new(0, 0, 0, 0);
             BottomImage = '';
             TopImage = '';
@@ -3528,44 +3610,46 @@ function Library:CreateWindow(...)
             -- A bit scuffed, but if we're going from not toggled -> toggled we want to show the frame immediately so that the fade is visible.
             Outer.Visible = true;
 
-            task.spawn(function()
+            if (not InputService.TouchEnabled) and Drawing and Drawing.new then
+                task.spawn(function()
                 -- TODO: add cursor fade?
-                local State = InputService.MouseIconEnabled;
+                    local State = InputService.MouseIconEnabled;
 
-                local Cursor = Drawing.new('Triangle');
-                Cursor.Thickness = 1;
-                Cursor.Filled = true;
-                Cursor.Visible = true;
+                    local Cursor = Drawing.new('Triangle');
+                    Cursor.Thickness = 1;
+                    Cursor.Filled = true;
+                    Cursor.Visible = true;
 
-                local CursorOutline = Drawing.new('Triangle');
-                CursorOutline.Thickness = 1;
-                CursorOutline.Filled = false;
-                CursorOutline.Color = Color3.new(0, 0, 0);
-                CursorOutline.Visible = true;
+                    local CursorOutline = Drawing.new('Triangle');
+                    CursorOutline.Thickness = 1;
+                    CursorOutline.Filled = false;
+                    CursorOutline.Color = Color3.new(0, 0, 0);
+                    CursorOutline.Visible = true;
 
-                while Toggled and ScreenGui.Parent do
-                    InputService.MouseIconEnabled = false;
+                    while Toggled and ScreenGui.Parent do
+                        InputService.MouseIconEnabled = false;
 
-                    local mPos = InputService:GetMouseLocation();
+                        local mPos = InputService:GetMouseLocation();
 
-                    Cursor.Color = Library.AccentColor;
+                        Cursor.Color = Library.AccentColor;
 
-                    Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
-                    Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
-                    Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
+                        Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
+                        Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
+                        Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
 
-                    CursorOutline.PointA = Cursor.PointA;
-                    CursorOutline.PointB = Cursor.PointB;
-                    CursorOutline.PointC = Cursor.PointC;
+                        CursorOutline.PointA = Cursor.PointA;
+                        CursorOutline.PointB = Cursor.PointB;
+                        CursorOutline.PointC = Cursor.PointC;
 
-                    RenderStepped:Wait();
-                end;
+                        RenderStepped:Wait();
+                    end;
 
-                InputService.MouseIconEnabled = State;
+                    InputService.MouseIconEnabled = State;
 
-                Cursor:Remove();
-                CursorOutline:Remove();
-            end);
+                    Cursor:Remove();
+                    CursorOutline:Remove();
+                end);
+            end;
         end;
 
         for _, Desc in next, Outer:GetDescendants() do
@@ -3608,6 +3692,74 @@ function Library:CreateWindow(...)
 
         Fading = false;
     end
+
+    if InputService.TouchEnabled then
+        local MobileToggle = Library:Create('TextButton', {
+            Active = true;
+            AutoButtonColor = false;
+            BackgroundColor3 = Library.MainColor;
+            BorderColor3 = Library.AccentColor;
+            Font = Library.Font;
+            Position = UDim2.new(0, 8, 0.5, -15);
+            Size = UDim2.fromOffset(42, 30);
+            Text = 'UI';
+            TextColor3 = Library.FontColor;
+            TextSize = 14;
+            TextStrokeTransparency = 0;
+            ZIndex = 100;
+            Parent = ScreenGui;
+        });
+
+        Library:ApplyTextStroke(MobileToggle);
+        Library:AddToRegistry(MobileToggle, {
+            BackgroundColor3 = 'MainColor';
+            BorderColor3 = 'AccentColor';
+            TextColor3 = 'FontColor';
+        });
+
+        local Dragging = false;
+        local DragInput = nil;
+        local DragStart = nil;
+        local ButtonStart = nil;
+        local DidDrag = false;
+
+        MobileToggle.InputBegan:Connect(function(Input)
+            if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                Dragging = true;
+                DidDrag = false;
+                DragInput = Input;
+                DragStart = Input.Position;
+                ButtonStart = MobileToggle.Position;
+
+                Input.Changed:Connect(function()
+                    if Input.UserInputState == Enum.UserInputState.End then
+                        Dragging = false;
+                        if not DidDrag then
+                            task.spawn(Library.Toggle);
+                        end;
+                    end;
+                end);
+            end;
+        end);
+
+        Library:GiveSignal(InputService.InputChanged:Connect(function(Input)
+            if Input ~= DragInput or not Dragging or not DragStart or not ButtonStart then
+                return;
+            end;
+
+            local Delta = Input.Position - DragStart;
+            if math.abs(Delta.X) > 6 or math.abs(Delta.Y) > 6 then
+                DidDrag = true;
+            end;
+
+            MobileToggle.Position = UDim2.new(
+                ButtonStart.X.Scale,
+                ButtonStart.X.Offset + Delta.X,
+                ButtonStart.Y.Scale,
+                ButtonStart.Y.Offset + Delta.Y
+            );
+        end));
+    end;
 
     Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
         if type(Library.ToggleKeybind) == 'table' and Library.ToggleKeybind.Type == 'KeyPicker' then
