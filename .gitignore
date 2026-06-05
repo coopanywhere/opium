@@ -3,5 +3,8 @@
 *.bak
 demonology_raw.lua
 tools/
+pvp.lua
+pvp_*.lua
+soru_ally_safe.lua
 Thumbs.db
 .DS_Store
